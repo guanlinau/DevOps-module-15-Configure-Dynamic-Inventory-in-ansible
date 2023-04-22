@@ -1,0 +1,80 @@
+---
+- name: Wait for target server start / ssh reset_connection
+  hosts: all
+  # gather_facts: False
+  tasks:
+    - name: Ensure ssh port open
+      wait_for:
+        port: 22
+        delay: 30
+        timeout: 200
+        search_regex: OpenSSH
+        host: "{{ (ansible_ssh_host|default(ansible_host))|default(inventory_hostname) }}"
+      vars:
+        ansible_connection: local
+        # ansible_python_interpreter: /usr/bin/python
+
+- name: Update yum package, install python3, docker and docker-compose
+  hosts: all
+  become: yes
+  # gather_facts: False
+  tasks:
+    - name: Update yum package, install python3 and docker
+      # vars:
+      #   ansible_python_interpreter: /usr/bin/python
+      yum:
+        name:
+          # - python3
+          - docker
+        update_cache: yes
+        state: present
+    - name: Install docker-compose
+      get_url:
+        # 下面这个没用
+        # url: https://github.com/docker/compose/releases/download/1.27.4/docker-compose-Linux-{{lookup('pipe', 'uname -m')}}
+        url: https://github.com/docker/compose/releases/download/1.27.4/docker-compose-Linux-x86_64
+        dest: /usr/bin/docker-compose
+        mode: +x
+    - name: Start docker deamon
+      systemd:
+        name: docker
+        state: started
+    - name: Install python docker and docker-compose package
+      pip:
+        name:
+          - docker
+          - docker-compose
+
+- name: Add ec2-user to docker group
+  hosts: all
+  become: yes
+  tasks:
+    - name: Add ec2-user to docker group
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
+    - name: ec2-user reconnect to server session
+      meta: reset_connection
+
+- name: Start docker containers
+  hosts: all
+  vars_files:
+    - provider_vars
+  # vars_prompt:
+  #   - name: docker_password
+  #     prompt: Enter docker password for docker registry
+  tasks:
+    - name: copy docker-compose file to ec2-server
+      copy:
+        src: ./docker-compose.yaml
+        dest: /home/ec2-user/docker-compose.yaml
+    - name: Docker login
+      docker_login:
+        registry_url: https://registry.hub.docker.com/v2
+        username: jason8746
+        password: "{{docker_password}}"
+    - name: Start the application from docker docker-compose
+      docker_compose:
+        project_src: /home/ec2-user
+        state: present
